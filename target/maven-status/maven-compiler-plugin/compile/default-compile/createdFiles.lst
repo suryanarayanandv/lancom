@@ -1,2 +1,6 @@
-com/zoho/lays/lancom/Main.class
 com/zoho/lays/lancom/Calculator.class
+com/zoho/lays/lancom/discovery/ServiceDiscovery$LanServiceListener.class
+com/zoho/lays/lancom/discovery/ServiceDiscovery.class
+com/zoho/lays/lancom/Main.class
+com/zoho/lays/lancom/discovery/DiscoverLanDevices.class
+com/zoho/lays/lancom/discovery/ServiceRegistration.class

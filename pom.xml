@@ -40,5 +40,12 @@
             <version>5.10.0</version>
             <scope>test</scope>
         </dependency>
+
+        <!-- https://mvnrepository.com/artifact/org.jmdns/jmdns -->
+        <dependency>
+            <groupId>org.jmdns</groupId>
+            <artifactId>jmdns</artifactId>
+            <version>3.5.1</version>
+        </dependency>
     </dependencies>
 </project>
