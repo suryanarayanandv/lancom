@@ -16,3 +16,14 @@ UI
 
 
 [ ] - Runnable .exe
+
+[ ] - V2
+
+Encryption
+
+Add Authentication/Validation Later
+To prevent spoofed call requests in open networks, you can:
+
+Sign messages with app instance ID / key,
+
+Include basic peer validation.
