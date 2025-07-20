@@ -6,12 +6,17 @@ import java.net.UnknownHostException;
 import javax.jmdns.JmDNS;
 import javax.jmdns.ServiceEvent;
 import javax.jmdns.ServiceListener;
+import javax.jmdns.ServiceInfo;
 
 public class ServiceDiscovery {
+    private static JmDNS jmDNS;
 
     private static class LanServiceListener implements ServiceListener {
         @Override
         public void serviceAdded(ServiceEvent event) {
+            if (jmDNS == null) {
+                jmDNS.requestServiceInfo(event.getType(), event.getName(), true);
+            }
             System.out.println("Service added: " + event.getInfo());
         }
 
@@ -22,18 +27,24 @@ public class ServiceDiscovery {
 
         @Override
         public void serviceResolved(ServiceEvent event) {
-            System.out.println("Service resolved: " + event.getInfo());
+            ServiceInfo info = event.getInfo();
+            String peerIP = info.getInetAddresses()[0].getHostAddress();
+            int peerPort = info.getPort();
+            String hostName = info.getAddress().getHostName();
+
+            System.out.println("Discovered peer:");
+            System.out.println("  HostName: " + hostName);
+            System.out.println("  IP: " + peerIP);
+            System.out.println("  Port: " + peerPort);
         }
     }
 
-    public static void discoverService() {
+    public static void discoverService(JmDNS jmDNS, String serviceName) throws Exception {
         try {
-            JmDNS jmDNS = JmDNS.create(InetAddress.getLocalHost());
-            jmDNS.addServiceListener("_http._tcp.local", new LanServiceListener());
-
-            Thread.sleep(50000);
+            System.out.println("Discovering Service : " + serviceName);
+            jmDNS.addServiceListener(DiscoveryConstants.SERVICE_TYPE, new LanServiceListener());
         } catch (Exception e) {
-            System.out.println("Error during service discovery: " + e.getMessage());
+            throw new Exception(DiscoveryConstants.ERROR_SERVICE_DISCOVERY + e.getMessage(), e);
         }
     }
 }

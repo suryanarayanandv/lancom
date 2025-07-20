@@ -5,19 +5,19 @@ import javax.jmdns.ServiceInfo;
 import javax.jmdns.JmDNS;
 
 public class ServiceRegistration {
-    public static void registerService() {
+    public static void registerService(JmDNS jmDNS, String serviceName, int port, InetAddress localIP) throws Exception {
         try {
             // JmDNS Serice
-            JmDNS jmDNS = JmDNS.create(InetAddress.getLocalHost());
-            ServiceInfo serviceInfo = ServiceInfo.create("_http._tcp.local", "example", 1234, "path=index.html");
+            ServiceInfo serviceInfo = ServiceInfo.create(
+                DiscoveryConstants.SERVICE_TYPE, 
+                serviceName + "-" + localIP.getHostAddress(), 
+                port, "path=index.html");
     
             jmDNS.registerService(serviceInfo);
-    
-            Thread.sleep(50000);
 
-            jmDNS.unregisterAllServices();
+            System.out.println("Service Registered on port : " + port);
         } catch (Exception e) {
-            System.out.println(e.getMessage());
+            throw new Exception(DiscoveryConstants.ERROR_SERVICE_REGISTRATION + e.getMessage(), e);
         }
     }
 }

@@ -7,10 +7,12 @@ public class Main {
     public static void main(String[] args) {
         // Test
         if (args.length == 0) {
+            System.out.println("Registering to LanCom Service.");
             ServiceRegistration.registerService();
         }
         else {
+            System.out.println("Discovering LanCom Service.");
             ServiceDiscovery.discoverService();
         }
-    } 
+    }
 }
