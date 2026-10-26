@@ -78,17 +78,31 @@ java -jar target/lancom-1.jar --help
 ### Usage
 
 ```bash
-# 1. On each machine, list the devices that support the chosen format
+# 1. On each machine, list devices and the channels they support
 java -jar target/lancom-1.jar devices
 
 # 2. On the machine with the Bluetooth headphones (pair and connect them in the OS first)
-java -jar target/lancom-1.jar receive --device "Headphones" --allow 192.168.1.20
+java -jar target/lancom-1.jar receive --device "<HEADPHONE_NAME>" --allow <SENDER_IP>
 
 # 3. On the capturing machine
-java -jar target/lancom-1.jar send --target 192.168.1.30:50005
+java -jar target/lancom-1.jar send --target <RECEIVER_IP>:50005
 ```
 
-Audio options (`--sample-rate`, `--channels`, `--frame-ms`) must match on both ends. Mismatched packets are dropped and a warning is logged. Use `-v` for debug logging. Stats are logged every 10 seconds.
+The receiver listens on UDP port 50005 by default. `--allow` takes the **sender's** IP; `--target` takes the **receiver's** IP.
+
+Audio options (`--sample-rate`, `--channels`, `--frame-ms`) must match on both ends. Mismatched packets are dropped and a warning is logged. The stream defaults to mono. Devices with a different channel count are converted automatically: a mono-only laptop microphone works with a `--channels 2` stream, and stereo-only headphones work with a mono one. Use `-v` for debug logging.
+
+Stats are logged every 10 seconds. `capturePeak` (sender) and `playbackPeak` (receiver) show the loudest sample in that period in dBFS. `silent` means only zeros are flowing.
+
+### Troubleshooting
+
+| Symptom | Likely cause |
+|---------|--------------|
+| Sender logs `No route to host` / `Host is down` | Receiver IP is wrong or unreachable. Phone hotspots often block traffic between devices. Check with `ping <RECEIVER_IP>`. |
+| Receiver `received` stays at 0 while the sender's `sent` rises | Firewall on the receiver, or the wrong port. |
+| `capturePeak=silent` and a "digital silence" warning on the sender | The app running lancom has no microphone permission (macOS: System Settings → Privacy & Security → Microphone, then restart that app), or the input is muted. |
+| `playbackPeak` shows a level but nothing is heard | Output volume, or the headphones are connected to another device (e.g. a phone). |
+| `formatMismatch` rises on the receiver | Audio options differ between the two ends. |
 
 Exit codes: `0` success, `1` runtime failure (device or network), `2` invalid usage.
 
@@ -98,7 +112,7 @@ Exit codes: `0` success, `1` runtime failure (device or network), `2` invalid us
 |---------|----------------|
 | `protocol` | Versioned binary wire format (`PacketCodec`) and immutable `AudioPacket`. Decoding treats every datagram as untrusted. |
 | `buffer` | `JitterBuffer`: reordering, loss concealment (silence), underrun re-buffering, overflow trimming, wrap-safe sequence numbers. |
-| `audio` | `AudioSource` / `AudioSink` abstractions with Java Sound implementations and device lookup. |
+| `audio` | `AudioSource` / `AudioSink` abstractions with Java Sound implementations and device lookup. Device channel negotiation with mono/stereo conversion (`PcmChannelConverter`, `ChannelConvertingSource`/`Sink`), level metering (`PcmLevels`) and silence detection (`SilenceDetector`). |
 | `net` | `AudioSender` / `AudioReceiver` over UDP, with a shared `StreamNode` lifecycle (single start, idempotent close, failure propagation). |
 | `config` | Immutable, validated `AudioSettings`, `SenderConfig`, `ReceiverConfig`. |
 | `cli` | Strict argument parser and config factory. |

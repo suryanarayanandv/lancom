@@ -16,7 +16,8 @@ public final class AudioSettings {
     public static final List<Integer> SUPPORTED_SAMPLE_RATES = List.of(8_000, 16_000, 24_000, 32_000, 44_100, 48_000);
     public static final List<Integer> SUPPORTED_FRAME_DURATIONS_MS = List.of(5, 10, 20, 40);
     public static final int DEFAULT_SAMPLE_RATE = 48_000;
-    public static final int DEFAULT_CHANNELS = 2;
+    /** Mono: microphones are mono, and it halves bandwidth. Devices that need stereo are converted. */
+    public static final int DEFAULT_CHANNELS = 1;
     public static final int DEFAULT_FRAME_DURATION_MS = 10;
 
     private final int sampleRate;

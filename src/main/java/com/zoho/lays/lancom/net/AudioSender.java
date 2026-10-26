@@ -1,6 +1,8 @@
 package com.zoho.lays.lancom.net;
 
 import com.zoho.lays.lancom.audio.AudioSource;
+import com.zoho.lays.lancom.audio.PcmLevels;
+import com.zoho.lays.lancom.audio.SilenceDetector;
 import com.zoho.lays.lancom.config.AudioSettings;
 import com.zoho.lays.lancom.config.SenderConfig;
 import com.zoho.lays.lancom.protocol.AudioPacket;
@@ -12,6 +14,7 @@ import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
 import java.nio.channels.DatagramChannel;
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.util.Objects;
 import java.util.logging.Logger;
 
@@ -24,16 +27,21 @@ public final class AudioSender extends StreamNode {
     private static final Logger LOG = Logger.getLogger(AudioSender.class.getName());
     private static final int SEND_BUFFER_BYTES = 1 << 20;
     private static final int SEND_ERROR_LOG_INTERVAL = 500;
+    static final Duration SILENCE_THRESHOLD = Duration.ofSeconds(3);
+    private static final Duration SILENCE_REPEAT = Duration.ofSeconds(30);
 
     private final SenderConfig config;
     private final AudioSource source;
     private final int streamId;
+    /** Confined to the sender thread. */
+    private final SilenceDetector silenceDetector;
     private DatagramChannel channel;
 
     public AudioSender(SenderConfig config, AudioSource source) {
         this.config = Objects.requireNonNull(config, "config");
         this.source = Objects.requireNonNull(source, "source");
         this.streamId = new SecureRandom().nextInt();
+        this.silenceDetector = SilenceDetector.forDurations(config.audio(), SILENCE_THRESHOLD, SILENCE_REPEAT);
     }
 
     public int streamId() {
@@ -77,6 +85,9 @@ public final class AudioSender extends StreamNode {
                 }
                 return;
             }
+            int peak = PcmLevels.peak(frame, 0, frame.length);
+            stats.recordCapturePeak(peak);
+            reportSilence(silenceDetector.onFrame(peak == 0));
             AudioPacket packet = new AudioPacket(streamId, sequence, samplePosition, audio.sampleRate(),
                     audio.channels(), AudioSettings.BITS_PER_SAMPLE, frame);
             datagram.clear();
@@ -85,6 +96,25 @@ public final class AudioSender extends StreamNode {
             send(datagramChannel, datagram);
             sequence++;
             samplePosition += audio.samplesPerPacket();
+        }
+    }
+
+    private void reportSilence(SilenceDetector.Event event) {
+        switch (event) {
+            case SILENCE_DETECTED:
+                LOG.warning(() -> "Capture device has delivered only digital silence for "
+                        + SILENCE_THRESHOLD.toSeconds() + " s. Likely causes: (1) the app running lancom lacks "
+                        + "microphone permission (macOS: System Settings > Privacy & Security > Microphone, then "
+                        + "restart that app); (2) the selected input is muted or disconnected (try --device).");
+                break;
+            case STILL_SILENT:
+                LOG.warning("Capture is still digitally silent; the receiver is getting silence");
+                break;
+            case AUDIO_RESUMED:
+                LOG.info("Capture device is delivering audio again");
+                break;
+            default:
+                break;
         }
     }
 

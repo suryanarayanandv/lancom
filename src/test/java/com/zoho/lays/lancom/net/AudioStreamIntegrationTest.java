@@ -2,6 +2,8 @@ package com.zoho.lays.lancom.net;
 
 import com.zoho.lays.lancom.audio.AudioSink;
 import com.zoho.lays.lancom.audio.AudioSource;
+import com.zoho.lays.lancom.audio.ChannelConvertingSink;
+import com.zoho.lays.lancom.audio.ChannelConvertingSource;
 import com.zoho.lays.lancom.config.AudioSettings;
 import com.zoho.lays.lancom.config.ReceiverConfig;
 import com.zoho.lays.lancom.config.SenderConfig;
@@ -15,6 +17,7 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.channels.DatagramChannel;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -22,7 +25,12 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
+import java.util.logging.Handler;
+import java.util.logging.Level;
+import java.util.logging.LogRecord;
+import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -153,6 +161,73 @@ class AudioStreamIntegrationTest {
         receiver.termination().get(1, TimeUnit.SECONDS);
     }
 
+    @Test
+    void monoOnlyMicrophoneStreamsStereoToMonoOnlyHeadphones() throws Exception {
+        // Reproduces the field failure: stereo stream, mono-only capture device, and (worst case) a playback
+        // device that only accepts mono. Both ends must convert, and real audio must arrive.
+        AudioSettings stereo = new AudioSettings(8_000, 2, 5);
+        MonoCollectingSink headphones = new MonoCollectingSink();
+        AudioReceiver receiver = startReceiver(ReceiverConfig.builder()
+                .bindAddress(new InetSocketAddress(LOOPBACK, 0))
+                .audio(stereo)
+                .jitterMs(10)
+                .build(), new ChannelConvertingSink(headphones, 2, 1));
+
+        int frames = 100;
+        short tone = 1_234;
+        AudioSender sender = track(new AudioSender(SenderConfig.builder()
+                .target(new InetSocketAddress(LOOPBACK, receiver.localAddress().getPort()))
+                .audio(stereo)
+                .build(), new ChannelConvertingSource(new ConstantMonoSource(tone, frames * 40), 1, 2)));
+        sender.start();
+        sender.termination().get(15, TimeUnit.SECONDS);
+        assertEquals(frames, sender.stats().sent());
+        assertEquals(tone, sender.stats().capturePeak());
+
+        awaitCondition(() -> headphones.toneSamples.get() >= frames * 40 * 9 / 10, "mono tone reaches headphones");
+        assertEquals(0, headphones.otherSamples.get(), "only the tone or silence may be played");
+        assertEquals(tone, receiver.stats().playbackPeak());
+        assertEquals(0, receiver.stats().formatMismatch());
+    }
+
+    @Test
+    void warnsWhenCaptureIsDigitallySilent() throws Exception {
+        AudioReceiver receiver = startReceiver(receiverConfig().build(), new RecordingSink());
+        long silentFrames = AudioSender.SILENCE_THRESHOLD.toMillis() / AUDIO.frameDurationMs();
+        List<String> warnings = new CopyOnWriteArrayList<>();
+        Handler handler = new Handler() {
+            @Override
+            public void publish(LogRecord record) {
+                if (record.getLevel() == Level.WARNING) {
+                    warnings.add(record.getMessage());
+                }
+            }
+
+            @Override
+            public void flush() {
+            }
+
+            @Override
+            public void close() {
+            }
+        };
+        Logger logger = Logger.getLogger(AudioSender.class.getName());
+        logger.addHandler(handler);
+        try {
+            AudioSender sender = track(new AudioSender(SenderConfig.builder()
+                    .target(new InetSocketAddress(LOOPBACK, receiver.localAddress().getPort()))
+                    .audio(AUDIO)
+                    .build(), new ConstantMonoSource((short) 0, (int) (silentFrames + 10) * 40)));
+            sender.start();
+            sender.termination().get(15, TimeUnit.SECONDS);
+            assertEquals(0, sender.stats().capturePeak());
+            assertTrue(warnings.stream().anyMatch(m -> m.contains("digital silence")
+                    && m.contains("microphone permission")), "warnings: " + warnings);
+        } finally {
+            logger.removeHandler(handler);
+        }
+    }
+
     private ReceiverConfig.Builder receiverConfig() {
         return ReceiverConfig.builder()
                 .bindAddress(new InetSocketAddress(LOOPBACK, 0))
@@ -194,6 +269,80 @@ class AudioStreamIntegrationTest {
             Thread.sleep(10);
         }
         fail("Timed out waiting for: " + description);
+    }
+
+    /** A mono-only "microphone": {@code samples} copies of one sample value, returned in uneven chunks. */
+    private static final class ConstantMonoSource implements AudioSource {
+        private final short value;
+        private final int totalBytes;
+        private int position;
+        private volatile boolean closed;
+
+        ConstantMonoSource(short value, int samples) {
+            this.value = value;
+            this.totalBytes = samples * 2;
+        }
+
+        @Override
+        public void open() {
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length) {
+            if (closed || position >= totalBytes) {
+                return -1;
+            }
+            try {
+                Thread.sleep(1); // rough pacing so the receiver's jitter buffer is not flooded
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return -1;
+            }
+            int count = Math.min(Math.min(length, 37), totalBytes - position); // odd size splits samples
+            for (int i = 0; i < count; i++) {
+                int byteIndex = position + i;
+                buffer[offset + i] = (byteIndex & 1) == 0 ? (byte) value : (byte) (value >> 8);
+            }
+            position += count;
+            return count;
+        }
+
+        @Override
+        public void close() {
+            closed = true;
+        }
+    }
+
+    /** A mono-only playback device that counts tone samples versus anything else (silence excluded). */
+    private static final class MonoCollectingSink implements AudioSink {
+        final AtomicInteger toneSamples = new AtomicInteger();
+        final AtomicInteger otherSamples = new AtomicInteger();
+
+        @Override
+        public void open() {
+        }
+
+        @Override
+        public void write(byte[] buffer, int offset, int length) {
+            ByteBuffer pcm = ByteBuffer.wrap(buffer, offset, length).order(ByteOrder.LITTLE_ENDIAN);
+            while (pcm.remaining() >= 2) {
+                short sample = pcm.getShort();
+                if (sample == 1_234) {
+                    toneSamples.incrementAndGet();
+                } else if (sample != 0) {
+                    otherSamples.incrementAndGet();
+                }
+            }
+            try {
+                Thread.sleep(1);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        @Override
+        public void close() {
+        }
     }
 
     /** Produces {@code frames} frames, each tagged with its index, paced at the frame duration. */

@@ -15,7 +15,6 @@ import com.zoho.lays.lancom.net.AudioReceiver;
 import com.zoho.lays.lancom.net.AudioSender;
 import com.zoho.lays.lancom.net.StreamNode;
 
-import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.Mixer;
 import java.io.IOException;
 import java.io.PrintStream;
@@ -49,13 +48,14 @@ public final class Main {
             "                 [--jitter-ms MS] [--stream-timeout-ms MS] [audio options]",
             "",
             "Commands:",
-            "  devices   List capture and playback devices that support the audio format",
+            "  devices   List capture and playback devices and their supported channels",
             "  send      Capture audio and stream it to a receiver",
             "  receive   Receive a stream and play it (e.g. on Bluetooth headphones)",
             "",
             "Audio options (must be identical on sender and receiver):",
             "  --sample-rate HZ   8000|16000|24000|32000|44100|48000 (default " + AudioSettings.DEFAULT_SAMPLE_RATE + ")",
-            "  --channels N       1 or 2 (default " + AudioSettings.DEFAULT_CHANNELS + ")",
+            "  --channels N       Stream channels, 1 or 2 (default " + AudioSettings.DEFAULT_CHANNELS + ").",
+            "                     Devices with other channel counts are converted automatically.",
             "  --frame-ms MS      5|10|20|40 (default " + AudioSettings.DEFAULT_FRAME_DURATION_MS + ")",
             "",
             "Receiver options:",
@@ -149,7 +149,8 @@ public final class Main {
                     termination.get(STATS_INTERVAL.toMillis(), TimeUnit.MILLISECONDS);
                     return EXIT_OK;
                 } catch (TimeoutException e) {
-                    LOG.info(() -> "Stats: " + node.stats());
+                    String report = node.stats().report();
+                    LOG.info(() -> "Stats: " + report);
                 } catch (ExecutionException e) {
                     err.println("error: " + e.getCause().getMessage());
                     return EXIT_FAILURE;
@@ -169,20 +170,24 @@ public final class Main {
     }
 
     private int listDevices(AudioSettings settings) {
-        AudioFormat format = settings.toAudioFormat();
-        printDevices("Capture devices", AudioDevices.list(AudioDevices.Direction.CAPTURE, format), settings);
+        int rate = settings.sampleRate();
+        printDevices("Capture devices", AudioDevices.list(AudioDevices.Direction.CAPTURE, rate), rate);
         out.println();
-        printDevices("Playback devices", AudioDevices.list(AudioDevices.Direction.PLAYBACK, format), settings);
+        printDevices("Playback devices", AudioDevices.list(AudioDevices.Direction.PLAYBACK, rate), rate);
+        out.println();
+        out.println("Channel differences are converted automatically (e.g. a mono microphone on a stereo stream).");
         return EXIT_OK;
     }
 
-    private void printDevices(String title, List<Mixer.Info> devices, AudioSettings settings) {
-        out.println(title + " supporting " + settings.sampleRate() + " Hz / " + settings.channels() + " ch:");
+    private void printDevices(String title, List<AudioDevices.DeviceInfo> devices, int sampleRate) {
+        out.println(title + " supporting 16-bit PCM at " + sampleRate + " Hz:");
         if (devices.isEmpty()) {
             out.println("  (none)");
         }
-        for (Mixer.Info info : devices) {
-            out.println("  - " + info.getName() + "  [" + info.getVendor() + ", " + info.getDescription() + "]");
+        for (AudioDevices.DeviceInfo device : devices) {
+            Mixer.Info info = device.mixer();
+            out.println("  - " + info.getName() + "  (" + AudioDevices.describeChannels(device.channels())
+                    + ")  [" + info.getVendor() + ", " + info.getDescription() + "]");
         }
     }
 

@@ -1,9 +1,19 @@
 package com.zoho.lays.lancom.metrics;
 
+import com.zoho.lays.lancom.audio.PcmLevels;
+
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
-/** Thread-safe counters describing the health of an audio stream. */
+/**
+ * Thread-safe counters describing the health of an audio stream, plus peak audio levels per reporting
+ * period. Packet counters alone cannot distinguish real audio from a stream of silent packets.
+ */
 public final class StreamStats {
+    private static final int NOT_MEASURED = -1;
+
+    private final AtomicInteger capturePeak = new AtomicInteger(NOT_MEASURED);
+    private final AtomicInteger playbackPeak = new AtomicInteger(NOT_MEASURED);
     private final AtomicLong sent = new AtomicLong();
     private final AtomicLong sendErrors = new AtomicLong();
     private final AtomicLong received = new AtomicLong();
@@ -113,6 +123,52 @@ public final class StreamStats {
 
     public long overflowDrops() {
         return overflowDrops.get();
+    }
+
+    /** Records the peak sample magnitude (0..32768) of a captured frame. */
+    public void recordCapturePeak(int peak) {
+        recordPeak(capturePeak, peak);
+    }
+
+    /** Records the peak sample magnitude (0..32768) of a frame of received audio that was played. */
+    public void recordPlaybackPeak(int peak) {
+        recordPeak(playbackPeak, peak);
+    }
+
+    /** Highest capture peak since the last {@link #report}, or -1 if capture is not measured. */
+    public int capturePeak() {
+        return capturePeak.get();
+    }
+
+    /** Highest playback peak since the last {@link #report}, or -1 if playback is not measured. */
+    public int playbackPeak() {
+        return playbackPeak.get();
+    }
+
+    /**
+     * Counters plus peak levels for the period since the previous report; resets the period peaks. Intended
+     * for a single periodic reporter.
+     */
+    public String report() {
+        StringBuilder sb = new StringBuilder(toString());
+        appendPeak(sb, "capturePeak", capturePeak);
+        appendPeak(sb, "playbackPeak", playbackPeak);
+        return sb.toString();
+    }
+
+    private static void recordPeak(AtomicInteger target, int peak) {
+        if (peak < 0 || peak > PcmLevels.FULL_SCALE) {
+            throw new IllegalArgumentException("peak must be in [0, " + PcmLevels.FULL_SCALE + "], was " + peak);
+        }
+        target.accumulateAndGet(peak, Math::max);
+    }
+
+    private static void appendPeak(StringBuilder sb, String label, AtomicInteger peak) {
+        // Once measured, a period with no frames reads as silent (0) rather than not measured.
+        int value = peak.getAndUpdate(v -> v == NOT_MEASURED ? NOT_MEASURED : 0);
+        if (value != NOT_MEASURED) {
+            sb.append(' ').append(label).append('=').append(PcmLevels.formatDbfs(value).replace(" ", ""));
+        }
     }
 
     @Override

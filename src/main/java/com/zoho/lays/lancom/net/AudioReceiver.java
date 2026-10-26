@@ -1,6 +1,7 @@
 package com.zoho.lays.lancom.net;
 
 import com.zoho.lays.lancom.audio.AudioSink;
+import com.zoho.lays.lancom.audio.PcmLevels;
 import com.zoho.lays.lancom.buffer.JitterBuffer;
 import com.zoho.lays.lancom.config.AudioSettings;
 import com.zoho.lays.lancom.config.ReceiverConfig;
@@ -145,7 +146,9 @@ public final class AudioReceiver extends StreamNode {
     private void playbackLoop() throws IOException {
         byte[] frame = new byte[config.audio().payloadBytes()];
         while (isRunning()) {
-            jitterBuffer.take(frame);
+            if (jitterBuffer.take(frame)) {
+                stats.recordPlaybackPeak(PcmLevels.peak(frame, 0, frame.length));
+            }
             sink.write(frame, 0, frame.length);
         }
     }
